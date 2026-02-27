@@ -7,6 +7,8 @@ const envSchema = z.object({
   ACROSS_BASE_URL: z.string().default("https://indexer.api.across.to"),
   WINDOW_MINUTES: z.coerce.number().positive().int().default(15),
   RUN_EVERY_MINUTES: z.coerce.number().positive().int().default(5),
+  MAX_ROUTES: z.coerce.number().positive().int().max(20).default(5),
+  DYNAMIC_ROUTES: z.coerce.boolean().default(true),
   ROUTES: z.string().optional(),
   LOG_LEVEL: z.string().optional(),
 });

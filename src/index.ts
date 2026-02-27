@@ -5,7 +5,7 @@ import { scoreMetrics } from "./core/scoring";
 import { formatReport, DecoratedMetrics } from "./reporting/format";
 import { postToTelegram } from "./reporting/telegram";
 import { AcrossAdapter } from "./adapters/across";
-import { adapterErrorMetrics, Adapter } from "./adapters/types";
+import { adapterErrorMetrics, Adapter, RouteKey, RawEvent } from "./adapters/types";
 
 const adapterInstances = new Map<string, Adapter>();
 adapterInstances.set("across", new AcrossAdapter(config.ACROSS_BASE_URL));
@@ -14,13 +14,51 @@ function getAdapter(protocol: string): Adapter | undefined {
   return adapterInstances.get(protocol.toLowerCase());
 }
 
+type RoutePlan = {
+  route: RouteKey;
+  events?: RawEvent[];
+};
+
+async function planRoutes(
+  windowStart: Date,
+  windowEnd: Date
+): Promise<RoutePlan[]> {
+  if (!config.DYNAMIC_ROUTES) {
+    return config.routes.map((route) => ({ route }));
+  }
+
+  const adapter = getAdapter("across");
+  if (adapter instanceof AcrossAdapter) {
+    try {
+      const top = await adapter.getTopRoutesForWindow(
+        windowStart,
+        windowEnd,
+        config.MAX_ROUTES
+      );
+      if (top.length) {
+        logger.info(
+          { routes: top.map((item) => item.route) },
+          "selected dynamic routes"
+        );
+        return top.map((item) => ({ route: item.route, events: item.events }));
+      }
+    } catch (error) {
+      logger.error({ err: error }, "dynamic route selection failed");
+    }
+  }
+
+  return config.routes.map((route) => ({ route }));
+}
+
 async function runOnce(): Promise<void> {
   const { start, end } = computeWindowRange(config.WINDOW_MINUTES);
   logger.info({ start, end }, "running bridge health cycle");
 
   const decorated: DecoratedMetrics[] = [];
+  const routePlans = await planRoutes(start, end);
 
-  for (const route of config.routes) {
+  for (const plan of routePlans) {
+    const { route, events } = plan;
     const adapter = getAdapter(route.protocol);
     if (!adapter) {
       logger.warn({ route }, "no adapter for protocol");
@@ -41,7 +79,9 @@ async function runOnce(): Promise<void> {
     }
 
     try {
-      const metrics = await adapter.getMetricsForWindow(route, start, end);
+      const metrics = events
+        ? await adapter.computeMetrics(events, route, start, end)
+        : await adapter.getMetricsForWindow(route, start, end);
       decorated.push({ metrics, status: scoreMetrics(metrics) });
     } catch (error) {
       logger.error({ route, err: error }, "adapter error");
