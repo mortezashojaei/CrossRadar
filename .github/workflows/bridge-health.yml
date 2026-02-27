@@ -1,0 +1,35 @@
+name: Bridge Health Radar
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Enable corepack
+        run: corepack enable
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Run tests
+        run: pnpm test
+      - name: Run radar (dry-run if Telegram env missing)
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          ACROSS_BASE_URL: ${{ vars.ACROSS_BASE_URL }}
+          LAYERZERO_SCAN_BASE_URL: ${{ vars.LAYERZERO_SCAN_BASE_URL }}
+          WORMHOLESCAN_BASE_URL: ${{ vars.WORMHOLESCAN_BASE_URL }}
+        run: pnpm start
