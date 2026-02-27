@@ -26,6 +26,8 @@ const chainAliasToId: Record<string, number> = {
   zkevm: 1101,
   avalanche: 43114,
   avax: 43114,
+  hyperliquid: 999,
+  hyper: 999,
 };
 
 const chainIdToAlias: Record<number, string> = {

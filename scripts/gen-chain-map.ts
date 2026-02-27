@@ -10,6 +10,11 @@ type ChainExport = {
   slug?: string;
 };
 
+const overrides: Record<number, { name: string; slug?: string }> = {
+  // Across uses chain id 999 for Hyperliquid EVM (viem labels it Zora Goerli testnet)
+  999: { name: "Hyperliquid EVM", slug: "hyperliquid" },
+};
+
 function isChainExport(value: unknown): value is ChainExport {
   return (
     !!value &&
@@ -33,6 +38,10 @@ async function main() {
           ? (value as { network?: string }).network
           : undefined;
     map[value.id] = { name: value.name, ...(slug ? { slug } : {}) };
+  }
+
+  for (const [id, metadata] of Object.entries(overrides)) {
+    map[Number(id)] = metadata;
   }
 
   const dirname = path.dirname(fileURLToPath(import.meta.url));

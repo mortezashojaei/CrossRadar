@@ -503,7 +503,8 @@
     "name": "Hyperliquid EVM Testnet"
   },
   "999": {
-    "name": "Zora Goerli Testnet"
+    "name": "Hyperliquid EVM",
+    "slug": "hyperliquid"
   },
   "1001": {
     "name": "Klaytn Baobab Testnet",
