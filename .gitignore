@@ -3,3 +3,4 @@ dist/
 .env
 .env.*
 telegram-updates.json
+logs/

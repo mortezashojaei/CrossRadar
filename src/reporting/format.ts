@@ -14,7 +14,17 @@ export function escapeMarkdown(text: string): string {
 
 function formatNumber(value: number | null, digits = 2): string {
   if (value == null || Number.isNaN(value)) return "N/A";
-  return value.toFixed(digits);
+  return escapeMarkdown(value.toFixed(digits));
+}
+
+function formatInteger(value: number): string {
+  if (Number.isNaN(value)) return "N/A";
+  return escapeMarkdown(Math.trunc(value).toString());
+}
+
+function formatPercent(value: number | null, digits = 1): string {
+  if (value == null || Number.isNaN(value)) return "N/A";
+  return `${escapeMarkdown((value * 100).toFixed(digits))}\\%`;
 }
 
 export function formatReport(
@@ -32,13 +42,10 @@ export function formatReport(
   const body = items
     .map(({ metrics, status }) => {
       const routeLabel = `${metrics.key.protocol} ${metrics.key.srcChain}→${metrics.key.dstChain}`;
-      const tx = metrics.txCount;
+      const tx = formatInteger(metrics.txCount);
       const usd = formatNumber(metrics.usdVolume);
       const median = formatNumber(metrics.medianCompletionMinutes);
-      const success =
-        metrics.successRate == null
-          ? "N/A"
-          : `${(metrics.successRate * 100).toFixed(1)}%`;
+      const success = formatPercent(metrics.successRate);
       const lines = [
         `${status.emoji} *${escapeMarkdown(routeLabel)}*`,
         `• tx_count: ${tx}`,

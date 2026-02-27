@@ -5,20 +5,10 @@ import { scoreMetrics } from "./core/scoring";
 import { formatReport, DecoratedMetrics } from "./reporting/format";
 import { postToTelegram } from "./reporting/telegram";
 import { AcrossAdapter } from "./adapters/across";
-import { LayerZeroAdapter } from "./adapters/layerzero";
-import { WormholeAdapter } from "./adapters/wormhole";
 import { adapterErrorMetrics, Adapter } from "./adapters/types";
 
 const adapterInstances = new Map<string, Adapter>();
 adapterInstances.set("across", new AcrossAdapter(config.ACROSS_BASE_URL));
-adapterInstances.set(
-  "layerzero",
-  new LayerZeroAdapter(config.LAYERZERO_SCAN_BASE_URL)
-);
-adapterInstances.set(
-  "wormhole",
-  new WormholeAdapter(config.WORMHOLESCAN_BASE_URL)
-);
 
 function getAdapter(protocol: string): Adapter | undefined {
   return adapterInstances.get(protocol.toLowerCase());

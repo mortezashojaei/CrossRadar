@@ -1,11 +1,11 @@
 # CrossRadar — Bridge Health Radar
 
-Autonomous stateless service that samples recent activity from major bridge protocols (Across, LayerZero, Wormhole), scores their health over the last N minutes, and posts a formatted summary to Telegram.
+Autonomous stateless service that samples recent activity from Across (via the public indexer API), scores the last N minutes of health, and posts a formatted summary to Telegram.
 
 ## Features
-- Fetches per-route metrics (tx count, USD volume, median completion, success rate) every run using public APIs.
-- Classifies health with 🟢 / 🟡 / 🔴 (and ⚪ when insufficient data) and optional insights.
-- Stateless: every run queries "recent" endpoints and filters in-memory.
+- Fetches per-route metrics (tx count, median completion, success rate) for Across routes using public endpoints.
+- Classifies health with 🟢 / 🟡 / 🔴 (and ⚪ when insufficient data) plus optional insights.
+- Stateless: every run queries "recent" data and filters in-memory.
 - Outputs Markdown-formatted Telegram message (also printed to stdout).
 - Dry-run automatically if Telegram env vars are missing.
 - Tests (Vitest) for stats, scoring, and Markdown escaping.
@@ -20,12 +20,10 @@ Autonomous stateless service that samples recent activity from major bridge prot
 | --- | --- |
 | `TELEGRAM_BOT_TOKEN` | Bot token from @BotFather |
 | `TELEGRAM_CHAT_ID` | Target chat/channel ID (use negative ID for channels) |
-| `ACROSS_BASE_URL` | Defaults to `https://across.to/api` |
-| `LAYERZERO_SCAN_BASE_URL` | Defaults to `https://api.layerzeroscan.com/api/v1` |
-| `WORMHOLESCAN_BASE_URL` | Defaults to `https://api.wormholescan.io/api/v1` |
+| `ACROSS_BASE_URL` | Defaults to `https://indexer.api.across.to` |
 | `WINDOW_MINUTES` | Lookback window (default 15) |
 | `RUN_EVERY_MINUTES` | Loop cadence for `pnpm dev` (default 5) |
-| `ROUTES` | JSON array of `{ protocol, srcChain, dstChain }` entries |
+| `ROUTES` | JSON array of `{ protocol, srcChain, dstChain }` entries. `srcChain`/`dstChain` can be common names (ETH, ARB, OPT, BASE, etc.) or numeric chain IDs. |
 
 ### Sample `.env`
 ```bash
@@ -34,9 +32,7 @@ TELEGRAM_CHAT_ID=-987654321
 WINDOW_MINUTES=15
 RUN_EVERY_MINUTES=5
 ROUTES='[
-  {"protocol":"Across","srcChain":"ETH","dstChain":"ARB"},
-  {"protocol":"LayerZero","srcChain":"ETH","dstChain":"BASE"},
-  {"protocol":"Wormhole","srcChain":"SOL","dstChain":"ETH"}
+  {"protocol":"Across","srcChain":"ETH","dstChain":"ARB"}
 ]'
 ```
 
@@ -76,23 +72,16 @@ Bridge Health — Last 15 Minutes (UTC)
 
 🟢 Across ETH→ARB
 • tx_count: 18
-• usd_volume: 91234.11
+• usd_volume: N/A
 • median_minutes: 3.2
 • success_rate: 100.0%
 
-🟡 LayerZero ETH→BASE
-• tx_count: 9
+🟡 Across ETH→OPT
+• tx_count: 3
 • usd_volume: N/A
 • median_minutes: 6.5
-• success_rate: 97.8%
-• notes: latency creeping
-
-🔴 Wormhole SOL→ETH
-• tx_count: 4
-• usd_volume: 1123.00
-• median_minutes: 12.0
 • success_rate: 90.0%
-• notes: success rate dropped
+• notes: latency creeping
 ```
 
 ## Deployment
@@ -106,5 +95,5 @@ Run `pnpm start` every 5 minutes (or use `pnpm dev` in a long-running process ma
 ```
 
 ## Notes & TODOs
-- Adapter schemas are best-effort and may need tweaks if upstream APIs change. Each adapter documents assumptions at the top of the file.
+- The Across adapter relies on the public indexer (`https://indexer.api.across.to`). If schemas change, update `src/adapters/across.ts`.
 - Success-rate and completion metrics gracefully degrade to `null` when unavailable; status falls back to ⚪ with notes.

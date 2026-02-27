@@ -4,13 +4,7 @@ import { routeKeySchema, RouteKey } from "./adapters/types";
 const envSchema = z.object({
   TELEGRAM_BOT_TOKEN: z.string().optional(),
   TELEGRAM_CHAT_ID: z.string().optional(),
-  ACROSS_BASE_URL: z.string().default("https://across.to/api"),
-  LAYERZERO_SCAN_BASE_URL: z
-    .string()
-    .default("https://api.layerzeroscan.com/api/v1"),
-  WORMHOLESCAN_BASE_URL: z
-    .string()
-    .default("https://api.wormholescan.io/api/v1"),
+  ACROSS_BASE_URL: z.string().default("https://indexer.api.across.to"),
   WINDOW_MINUTES: z.coerce.number().positive().int().default(15),
   RUN_EVERY_MINUTES: z.coerce.number().positive().int().default(5),
   ROUTES: z.string().optional(),
@@ -19,8 +13,7 @@ const envSchema = z.object({
 
 const defaultRoutes: RouteKey[] = [
   { protocol: "Across", srcChain: "ETH", dstChain: "ARB" },
-  { protocol: "LayerZero", srcChain: "ETH", dstChain: "BASE" },
-  { protocol: "Wormhole", srcChain: "SOL", dstChain: "ETH" },
+  { protocol: "Across", srcChain: "ETH", dstChain: "OPT" },
 ];
 
 function parseRoutes(raw?: string): RouteKey[] {

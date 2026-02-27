@@ -30,6 +30,4 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           ACROSS_BASE_URL: ${{ vars.ACROSS_BASE_URL }}
-          LAYERZERO_SCAN_BASE_URL: ${{ vars.LAYERZERO_SCAN_BASE_URL }}
-          WORMHOLESCAN_BASE_URL: ${{ vars.WORMHOLESCAN_BASE_URL }}
         run: pnpm start
