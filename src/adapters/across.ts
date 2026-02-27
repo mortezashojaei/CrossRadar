@@ -1,6 +1,7 @@
 import { fetchJson } from "../core/http";
 import { isWithinWindow } from "../core/window";
 import { median, minutesBetween, ratio } from "../core/stats";
+import { findChainIdByName, getChainNameById } from "../core/chains";
 import { Adapter, RouteKey, RouteMetrics, RawEvent } from "./types";
 
 const DEFAULT_LIMIT = 500;
@@ -183,17 +184,22 @@ export class AcrossAdapter implements Adapter {
   }
 
   private resolveChainId(chain: string): number {
-    const normalized = chain.trim().toLowerCase();
+    const trimmed = chain.trim();
+    const normalized = trimmed.toLowerCase();
     if (/^\d+$/.test(normalized)) {
       return Number(normalized);
     }
-    const id = chainAliasToId[normalized];
-    if (!id) {
-      throw new Error(
-        `Unknown chain ${chain}. Use a numeric chain id or extend chainAliasToId.`
-      );
+    const manual = chainAliasToId[normalized];
+    if (manual) {
+      return manual;
     }
-    return id;
+    const viemId = findChainIdByName(trimmed);
+    if (viemId != null) {
+      return viemId;
+    }
+    throw new Error(
+      `Unknown chain ${chain}. Use a numeric chain id or update the alias map.`
+    );
   }
 
   private routeFromDeposit(deposit: IndexerDeposit): RouteKey | null {
@@ -212,7 +218,7 @@ export class AcrossAdapter implements Adapter {
   }
 
   private aliasFromChainId(id: number): string {
-    return chainIdToAlias[id] ?? String(id);
+    return chainIdToAlias[id] ?? getChainNameById(id);
   }
 
   private normalizeChainId(value?: number | string | null): number | null {
