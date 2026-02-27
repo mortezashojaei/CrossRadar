@@ -22,12 +22,12 @@ export function formatReport(
   windowStart: Date,
   windowEnd: Date
 ): string {
-  const header = `*Bridge Health — Last ${Math.round(
-    (windowEnd.getTime() - windowStart.getTime()) / 60000
-  )} Minutes (UTC)*`;
-  const timestamp = `_${escapeMarkdown(
-    windowEnd.toISOString()
-  )}_`;
+  const header = `*${escapeMarkdown(
+    `Bridge Health — Last ${Math.round(
+      (windowEnd.getTime() - windowStart.getTime()) / 60000
+    )} Minutes (UTC)`
+  )}*`;
+  const timestamp = `_${escapeMarkdown(windowEnd.toISOString())}_`;
 
   const body = items
     .map(({ metrics, status }) => {
