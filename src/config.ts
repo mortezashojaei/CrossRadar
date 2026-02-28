@@ -5,6 +5,7 @@ const envSchema = z.object({
   TELEGRAM_BOT_TOKEN: z.string().optional(),
   TELEGRAM_CHAT_ID: z.string().optional(),
   ACROSS_BASE_URL: z.string().default("https://indexer.api.across.to"),
+  RELAY_BASE_URL: z.string().default("https://api.relay.link"),
   WINDOW_MINUTES: z.coerce.number().positive().int().default(15),
   RUN_EVERY_MINUTES: z.coerce.number().positive().int().default(5),
   MAX_ROUTES: z.coerce.number().positive().int().max(20).default(5),
@@ -17,6 +18,7 @@ const envSchema = z.object({
 const defaultRoutes: RouteKey[] = [
   { protocol: "Across", srcChain: "ETH", dstChain: "ARB" },
   { protocol: "Across", srcChain: "ETH", dstChain: "OPT" },
+  { protocol: "Relay", srcChain: "BASE", dstChain: "ARB" },
 ];
 
 function parseRoutes(raw?: string): RouteKey[] {

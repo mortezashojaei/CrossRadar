@@ -1,10 +1,10 @@
 # CrossRadar — Bridge Health Radar
 
-Autonomous stateless service that samples recent activity from Across (via the public indexer API), scores the last N minutes of health, and posts a formatted summary to Telegram.
+Autonomous stateless service that samples recent activity from Across (via the public indexer API) and Relay (via the public requests API), scores the last N minutes of health, and posts a formatted summary to Telegram.
 
 ## Features
-- Fetches per-route metrics (tx count, median completion, success rate) for Across routes using public endpoints.
-- Automatically highlights up to the top 5 most-active routes each run (dynamic selection can be disabled via env).
+- Fetches per-route metrics (tx count, median completion, success rate) for Across and Relay routes using public endpoints.
+- Automatically highlights up to the top 5 most-active routes each run (dynamic selection can be disabled via env). Each protocol (Across + Relay) keeps at least one fallback route even when live data is sparse, so both surfaces stay represented.
 - Classifies health with 🟢 / 🟡 / 🔴 (and ⚪ when insufficient data) plus optional insights.
 - Stateless: every run queries "recent" data and filters in-memory.
 - Outputs Markdown-formatted Telegram message (also printed to stdout).
@@ -22,12 +22,13 @@ Autonomous stateless service that samples recent activity from Across (via the p
 | `TELEGRAM_BOT_TOKEN` | Bot token from @BotFather |
 | `TELEGRAM_CHAT_ID` | Target chat/channel ID (use negative ID for channels) |
 | `ACROSS_BASE_URL` | Defaults to `https://indexer.api.across.to` |
+| `RELAY_BASE_URL` | Defaults to `https://api.relay.link` |
 | `COINGECKO_API_KEY` | Optional; enables live USD pricing for per-route volume |
 | `WINDOW_MINUTES` | Lookback window (default 15) |
 | `RUN_EVERY_MINUTES` | Loop cadence for `pnpm dev` (default 5) |
 | `MAX_ROUTES` | Maximum number of routes to report when dynamic selection is enabled (default 5) |
-| `DYNAMIC_ROUTES` | When `true` (default), CrossRadar inspects recent Across deposits and reports up to `MAX_ROUTES` busiest routes; set to `false` to use the static `ROUTES` list. |
-| `ROUTES` | JSON array of `{ protocol, srcChain, dstChain }` entries. `srcChain`/`dstChain` can be common names (ETH, ARB, OPT, BASE, etc.) or numeric chain IDs. Only used when `DYNAMIC_ROUTES=false` or no dynamic data is available. |
+| `DYNAMIC_ROUTES` | When `true` (default), CrossRadar inspects recent Across **and Relay** activity and reports up to `MAX_ROUTES` busiest routes; set to `false` to use the static `ROUTES` list. |
+| `ROUTES` | JSON array of `{ protocol, srcChain, dstChain }` entries. `srcChain`/`dstChain` can be common names (ETH, ARB, OPT, BASE, etc.) or numeric chain IDs. Only used when `DYNAMIC_ROUTES=false` or no dynamic data is available. Set `protocol` to `Across` or `Relay` to pick the adapter. |
 
 ### Sample `.env`
 (Default dynamic behaviour requires only Telegram + optional timing vars. The snippet below shows how to pin a single static route.)
@@ -39,6 +40,14 @@ RUN_EVERY_MINUTES=5
 DYNAMIC_ROUTES=false
 ROUTES='[
   {"protocol":"Across","srcChain":"ETH","dstChain":"ARB"}
+]'
+```
+
+Need Relay metrics too? Add another entry with `"protocol":"Relay"` and the origin/destination chain IDs/names you care about:
+```bash
+ROUTES='[
+  {"protocol":"Across","srcChain":"ETH","dstChain":"ARB"},
+  {"protocol":"Relay","srcChain":"8453","dstChain":"7777777"}
 ]'
 ```
 

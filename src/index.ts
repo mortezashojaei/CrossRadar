@@ -5,6 +5,7 @@ import { scoreMetrics } from "./core/scoring";
 import { formatReport, DecoratedMetrics } from "./reporting/format";
 import { postToTelegram } from "./reporting/telegram";
 import { AcrossAdapter } from "./adapters/across";
+import { RelayAdapter } from "./adapters/relay";
 import { adapterErrorMetrics, Adapter, RouteKey, RawEvent } from "./adapters/types";
 import { CoinGeckoClient } from "./core/pricing";
 
@@ -14,6 +15,7 @@ adapterInstances.set(
   "across",
   new AcrossAdapter(config.ACROSS_BASE_URL, coinGeckoClient)
 );
+adapterInstances.set("relay", new RelayAdapter(config.RELAY_BASE_URL));
 
 function getAdapter(protocol: string): Adapter | undefined {
   return adapterInstances.get(protocol.toLowerCase());
@@ -24,6 +26,18 @@ type RoutePlan = {
   events?: RawEvent[];
 };
 
+type DynamicAdapter = Adapter & {
+  getTopRoutesForWindow(
+    windowStart: Date,
+    windowEnd: Date,
+    maxRoutes: number
+  ): Promise<{ route: RouteKey; events: RawEvent[] }[]>;
+};
+
+function isDynamicAdapter(adapter: Adapter): adapter is DynamicAdapter {
+  return typeof adapter.getTopRoutesForWindow === "function";
+}
+
 async function planRoutes(
   windowStart: Date,
   windowEnd: Date
@@ -32,24 +46,72 @@ async function planRoutes(
     return config.routes.map((route) => ({ route }));
   }
 
-  const adapter = getAdapter("across");
-  if (adapter instanceof AcrossAdapter) {
+  const dynamicPlans: RoutePlan[] = [];
+  const attemptedProtocols = new Set<string>();
+  const successfulProtocols = new Set<string>();
+
+  for (const adapter of adapterInstances.values()) {
+    if (!isDynamicAdapter(adapter)) continue;
+    attemptedProtocols.add(adapter.protocol);
     try {
       const top = await adapter.getTopRoutesForWindow(
         windowStart,
         windowEnd,
         config.MAX_ROUTES
       );
-      if (top.length) {
-        logger.info(
-          { routes: top.map((item) => item.route) },
-          "selected dynamic routes"
-        );
-        return top.map((item) => ({ route: item.route, events: item.events }));
+      if (!top.length) {
+        logger.warn({ protocol: adapter.protocol }, "no dynamic routes found");
+        continue;
+      }
+      successfulProtocols.add(adapter.protocol);
+      logger.info(
+        { protocol: adapter.protocol, routes: top.map((item) => item.route) },
+        "selected dynamic routes"
+      );
+      for (const item of top) {
+        dynamicPlans.push({ route: item.route, events: item.events });
       }
     } catch (error) {
-      logger.error({ err: error }, "dynamic route selection failed");
+      logger.error(
+        { protocol: adapter.protocol, err: error },
+        "dynamic route selection failed"
+      );
     }
+  }
+
+  const unique = new Map<string, RoutePlan>();
+  for (const plan of dynamicPlans) {
+    const key = `${plan.route.protocol}:${plan.route.srcChain}->${plan.route.dstChain}`;
+    if (!unique.has(key)) {
+      unique.set(key, plan);
+    }
+  }
+
+  for (const protocol of attemptedProtocols) {
+    if (successfulProtocols.has(protocol)) continue;
+    const fallbacks = config.routes.filter(
+      (route) => route.protocol.toLowerCase() === protocol.toLowerCase()
+    );
+    if (fallbacks.length) {
+      logger.info({ protocol, routes: fallbacks }, "using fallback routes");
+      for (const route of fallbacks) {
+        const key = `${route.protocol}:${route.srcChain}->${route.dstChain}`;
+        if (!unique.has(key)) {
+          unique.set(key, { route });
+        }
+      }
+    }
+  }
+
+  for (const route of config.routes) {
+    const key = `${route.protocol}:${route.srcChain}->${route.dstChain}`;
+    if (!unique.has(key)) {
+      unique.set(key, { route });
+    }
+  }
+
+  if (unique.size) {
+    return Array.from(unique.values());
   }
 
   return config.routes.map((route) => ({ route }));

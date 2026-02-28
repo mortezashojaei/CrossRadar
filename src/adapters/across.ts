@@ -1,50 +1,13 @@
 import { fetchJson } from "../core/http";
 import { isWithinWindow } from "../core/window";
 import { median, minutesBetween, ratio } from "../core/stats";
-import { findChainIdByName, getChainNameById } from "../core/chains";
+import { aliasFromChainId, resolveChainIdFromInput } from "../core/chain-aliases";
 import { CoinGeckoClient, getDefaultDecimals } from "../core/pricing";
-import { Adapter, RouteKey, RouteMetrics, RawEvent } from "./types";
+import { Adapter, RouteKey, RouteMetrics, RawEvent, RouteSample } from "./types";
 import { formatUnits } from "viem";
 
 const DEFAULT_LIMIT = 500;
 const FETCH_TIMEOUT_MS = 15000;
-
-const chainAliasToId: Record<string, number> = {
-  eth: 1,
-  ethereum: 1,
-  arbitrum: 42161,
-  arb: 42161,
-  optimism: 10,
-  opt: 10,
-  base: 8453,
-  polygon: 137,
-  matic: 137,
-  poly: 137,
-  bsc: 56,
-  binance: 56,
-  linea: 59144,
-  blast: 81457,
-  scroll: 534352,
-  zkevm: 1101,
-  avalanche: 43114,
-  avax: 43114,
-  hyperliquid: 999,
-  hyper: 999,
-};
-
-const chainIdToAlias: Record<number, string> = {
-  1: "ETH",
-  10: "OPT",
-  56: "BSC",
-  1101: "ZKEVM",
-  137: "POLYGON",
-  8453: "BASE",
-  42161: "ARB",
-  43114: "AVAX",
-  534352: "SCROLL",
-  59144: "LINEA",
-  81457: "BLAST",
-};
 
 type IndexerDeposit = {
   originChainId?: number | string | null;
@@ -60,11 +23,6 @@ type IndexerDeposit = {
   outputAmount?: string | null;
   inputToken?: string | null;
   outputToken?: string | null;
-};
-
-export type RouteSample = {
-  route: RouteKey;
-  events: RawEvent[];
 };
 
 export class AcrossAdapter implements Adapter {
@@ -84,8 +42,8 @@ export class AcrossAdapter implements Adapter {
     windowStart: Date,
     windowEnd: Date
   ): Promise<RawEvent[]> {
-    const originId = this.resolveChainId(route.srcChain);
-    const destinationId = this.resolveChainId(route.dstChain);
+    const originId = resolveChainIdFromInput(route.srcChain);
+    const destinationId = resolveChainIdFromInput(route.dstChain);
     return this.fetchWindowDeposits(windowStart, windowEnd, {
       originChainId: originId,
       destinationChainId: destinationId,
@@ -138,7 +96,7 @@ export class AcrossAdapter implements Adapter {
       }
     }
 
-    const originChainId = this.resolveChainId(route.srcChain);
+    const originChainId = resolveChainIdFromInput(route.srcChain);
     const usdVolume = await this.computeUsdVolume(
       events as IndexerDeposit[],
       originChainId
@@ -270,25 +228,6 @@ export class AcrossAdapter implements Adapter {
     return Number.isFinite(num) ? num : null;
   }
 
-  private resolveChainId(chain: string): number {
-    const trimmed = chain.trim();
-    const normalized = trimmed.toLowerCase();
-    if (/^\d+$/.test(normalized)) {
-      return Number(normalized);
-    }
-    const manual = chainAliasToId[normalized];
-    if (manual) {
-      return manual;
-    }
-    const viemId = findChainIdByName(trimmed);
-    if (viemId != null) {
-      return viemId;
-    }
-    throw new Error(
-      `Unknown chain ${chain}. Use a numeric chain id or update the alias map.`
-    );
-  }
-
   private routeFromDeposit(deposit: IndexerDeposit): RouteKey | null {
     const origin = this.normalizeChainId(
       deposit.originChainId ?? deposit.sourceChainId
@@ -299,13 +238,9 @@ export class AcrossAdapter implements Adapter {
     if (origin == null || destination == null) return null;
     return {
       protocol: this.protocol,
-      srcChain: this.aliasFromChainId(origin),
-      dstChain: this.aliasFromChainId(destination),
+      srcChain: aliasFromChainId(origin),
+      dstChain: aliasFromChainId(destination),
     };
-  }
-
-  private aliasFromChainId(id: number): string {
-    return chainIdToAlias[id] ?? getChainNameById(id);
   }
 
   private normalizeChainId(value?: number | string | null): number | null {

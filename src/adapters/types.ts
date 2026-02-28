@@ -6,6 +6,11 @@ export type RouteKey = {
   dstChain: string;
 };
 
+export type RouteSample = {
+  route: RouteKey;
+  events: RawEvent[];
+};
+
 export type RouteMetrics = {
   key: RouteKey;
   windowStart: string;
@@ -49,6 +54,11 @@ export interface Adapter {
     windowStart: Date,
     windowEnd: Date
   ): Promise<RouteMetrics>;
+  getTopRoutesForWindow?(
+    windowStart: Date,
+    windowEnd: Date,
+    maxRoutes: number
+  ): Promise<RouteSample[]>;
 }
 
 export const adapterErrorMetrics = (
