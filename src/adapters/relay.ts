@@ -126,10 +126,47 @@ export class RelayAdapter implements Adapter {
       bucket.events.push(request);
     }
 
-    return Array.from(grouped.values())
-      .sort((a, b) => b.events.length - a.events.length)
-      .slice(0, maxRoutes)
-      .map(({ route, events }) => ({ route, events }));
+    const ranked = Array.from(grouped.values()).sort(
+      (a, b) => b.events.length - a.events.length
+    );
+
+    if (!ranked.length) {
+      const minuteBuckets = this.bucketByMinute(requests);
+      return minuteBuckets.slice(0, maxRoutes).map((bucket) => ({
+        route: bucket.route,
+        events: bucket.events,
+      }));
+    }
+
+    return ranked.slice(0, maxRoutes).map(({ route, events }) => ({
+      route,
+      events,
+    }));
+  }
+
+  private bucketByMinute(requests: RelayRequest[]): Array<{
+    route: RouteKey;
+    events: RelayRequest[];
+  }> {
+    const minuteMap = new Map<string, RelayRequest[]>();
+    for (const request of requests) {
+      const route = this.routeFromRequest(request);
+      if (!route) continue;
+      const created = this.getCreatedDate(request);
+      if (!created) continue;
+      const minuteKey = `${route.srcChain}->${route.dstChain}#${created
+        .toISOString()
+        .slice(0, 16)}`; // yyyy-mm-ddThh:mm
+      const bucket = minuteMap.get(minuteKey) ?? [];
+      bucket.push(request);
+      minuteMap.set(minuteKey, bucket);
+    }
+    return Array.from(minuteMap.entries())
+      .sort((a, b) => b[1].length - a[1].length)
+      .map(([, events]) => ({
+        route: this.routeFromRequest(events[0])!,
+        events,
+      }));
   }
 
   private async fetchRequests(

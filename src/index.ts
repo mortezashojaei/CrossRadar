@@ -1,4 +1,4 @@
-import { config } from "./config";
+import { config, getFallbackRoutes } from "./config";
 import { logger } from "./logger";
 import { computeWindowRange } from "./core/window";
 import { scoreMetrics } from "./core/scoring";
@@ -89,9 +89,11 @@ async function planRoutes(
 
   for (const protocol of attemptedProtocols) {
     if (successfulProtocols.has(protocol)) continue;
-    const fallbacks = config.routes.filter(
-      (route) => route.protocol.toLowerCase() === protocol.toLowerCase()
-    );
+    const fallbacks = getFallbackRoutes(protocol).length
+      ? getFallbackRoutes(protocol)
+      : config.routes.filter(
+          (route) => route.protocol.toLowerCase() === protocol.toLowerCase()
+        );
     if (fallbacks.length) {
       logger.info({ protocol, routes: fallbacks }, "using fallback routes");
       for (const route of fallbacks) {

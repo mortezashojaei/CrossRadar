@@ -19,7 +19,19 @@ const defaultRoutes: RouteKey[] = [
   { protocol: "Across", srcChain: "ETH", dstChain: "ARB" },
   { protocol: "Across", srcChain: "ETH", dstChain: "OPT" },
   { protocol: "Relay", srcChain: "BASE", dstChain: "ARB" },
+  { protocol: "Relay", srcChain: "BASE", dstChain: "ETH" },
+  { protocol: "Relay", srcChain: "ETH", dstChain: "BASE" },
 ];
+
+export const fallbackRoutesByProtocol: Record<string, RouteKey[]> = {
+  relay: [
+    { protocol: "Relay", srcChain: "BASE", dstChain: "ARB" },
+    { protocol: "Relay", srcChain: "BASE", dstChain: "ETH" },
+    { protocol: "Relay", srcChain: "ETH", dstChain: "BASE" },
+    { protocol: "Relay", srcChain: "ARB", dstChain: "BASE" },
+    { protocol: "Relay", srcChain: "BASE", dstChain: "POLYGON" },
+  ],
+};
 
 function parseRoutes(raw?: string): RouteKey[] {
   if (!raw) return defaultRoutes;
@@ -44,3 +56,7 @@ export function loadConfig(): AppConfig {
 }
 
 export const config = loadConfig();
+
+export function getFallbackRoutes(protocol: string): RouteKey[] {
+  return fallbackRoutesByProtocol[protocol.toLowerCase()] ?? [];
+}
