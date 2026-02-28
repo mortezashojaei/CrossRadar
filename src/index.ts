@@ -6,9 +6,14 @@ import { formatReport, DecoratedMetrics } from "./reporting/format";
 import { postToTelegram } from "./reporting/telegram";
 import { AcrossAdapter } from "./adapters/across";
 import { adapterErrorMetrics, Adapter, RouteKey, RawEvent } from "./adapters/types";
+import { CoinGeckoClient } from "./core/pricing";
 
 const adapterInstances = new Map<string, Adapter>();
-adapterInstances.set("across", new AcrossAdapter(config.ACROSS_BASE_URL));
+const coinGeckoClient = new CoinGeckoClient(config.COINGECKO_API_KEY);
+adapterInstances.set(
+  "across",
+  new AcrossAdapter(config.ACROSS_BASE_URL, coinGeckoClient)
+);
 
 function getAdapter(protocol: string): Adapter | undefined {
   return adapterInstances.get(protocol.toLowerCase());

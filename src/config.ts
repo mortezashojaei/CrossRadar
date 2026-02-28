@@ -11,6 +11,7 @@ const envSchema = z.object({
   DYNAMIC_ROUTES: z.coerce.boolean().default(true),
   ROUTES: z.string().optional(),
   LOG_LEVEL: z.string().optional(),
+  COINGECKO_API_KEY: z.string().optional(),
 });
 
 const defaultRoutes: RouteKey[] = [

@@ -22,6 +22,7 @@ Autonomous stateless service that samples recent activity from Across (via the p
 | `TELEGRAM_BOT_TOKEN` | Bot token from @BotFather |
 | `TELEGRAM_CHAT_ID` | Target chat/channel ID (use negative ID for channels) |
 | `ACROSS_BASE_URL` | Defaults to `https://indexer.api.across.to` |
+| `COINGECKO_API_KEY` | Optional; enables live USD pricing for per-route volume |
 | `WINDOW_MINUTES` | Lookback window (default 15) |
 | `RUN_EVERY_MINUTES` | Loop cadence for `pnpm dev` (default 5) |
 | `MAX_ROUTES` | Maximum number of routes to report when dynamic selection is enabled (default 5) |

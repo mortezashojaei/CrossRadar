@@ -2,7 +2,9 @@ import { fetchJson } from "../core/http";
 import { isWithinWindow } from "../core/window";
 import { median, minutesBetween, ratio } from "../core/stats";
 import { findChainIdByName, getChainNameById } from "../core/chains";
+import { CoinGeckoClient, getDefaultDecimals } from "../core/pricing";
 import { Adapter, RouteKey, RouteMetrics, RawEvent } from "./types";
+import { formatUnits } from "viem";
 
 const DEFAULT_LIMIT = 500;
 const FETCH_TIMEOUT_MS = 15000;
@@ -56,6 +58,8 @@ type IndexerDeposit = {
   outputPriceUsd?: string | number | null;
   inputAmount?: string | null;
   outputAmount?: string | null;
+  inputToken?: string | null;
+  outputToken?: string | null;
 };
 
 export type RouteSample = {
@@ -66,7 +70,10 @@ export type RouteSample = {
 export class AcrossAdapter implements Adapter {
   protocol = "Across";
 
-  constructor(private readonly baseUrl: string) {}
+  constructor(
+    private readonly baseUrl: string,
+    private readonly priceClient?: CoinGeckoClient
+  ) {}
 
   listSupportedRoutes(): RouteKey[] {
     return [];
@@ -131,12 +138,18 @@ export class AcrossAdapter implements Adapter {
       }
     }
 
+    const originChainId = this.resolveChainId(route.srcChain);
+    const usdVolume = await this.computeUsdVolume(
+      events as IndexerDeposit[],
+      originChainId
+    );
+
     return {
       key: route,
       windowStart: windowStart.toISOString(),
       windowEnd: windowEnd.toISOString(),
       txCount: events.length,
-      usdVolume: null,
+      usdVolume,
       medianCompletionMinutes: median(completionSamples),
       successRate: ratio(successes, events.length),
       notes: events.length ? undefined : ["no deposits in window"],
@@ -183,6 +196,78 @@ export class AcrossAdapter implements Adapter {
         ? isWithinWindow(created, { start: windowStart, end: windowEnd })
         : false;
     });
+  }
+
+  private async computeUsdVolume(
+    events: IndexerDeposit[],
+    chainId: number
+  ): Promise<number | null> {
+    if (!events.length) return null;
+    let total = 0;
+    for (const event of events) {
+      const usd = await this.estimateDepositUsd(event, chainId);
+      if (usd != null) {
+        total += usd;
+      }
+    }
+    return total > 0 ? total : null;
+  }
+
+  private async estimateDepositUsd(
+    event: IndexerDeposit,
+    chainId: number
+  ): Promise<number | null> {
+    if (!event.inputAmount) return null;
+    const amount = this.parseAmount(event.inputAmount);
+    if (amount == null) return null;
+
+    let priceUsd = this.toNumber(event.inputPriceUsd);
+    let decimals: number | null = null;
+
+    const normalizedAddress = this.normalizeAddress(event.inputToken);
+    if (
+      normalizedAddress &&
+      this.priceClient &&
+      this.priceClient.supportsChain(chainId)
+    ) {
+      const quote = await this.priceClient.getTokenQuote(
+        chainId,
+        normalizedAddress
+      );
+      if (quote) {
+        if (priceUsd == null && quote.priceUsd != null) {
+          priceUsd = quote.priceUsd;
+        }
+        if (quote.decimals != null) {
+          decimals = quote.decimals;
+        }
+      }
+    }
+
+    if (priceUsd == null) return null;
+    const resolvedDecimals = decimals ?? getDefaultDecimals();
+    const humanAmount = Number(formatUnits(amount, resolvedDecimals));
+    if (!Number.isFinite(humanAmount)) return null;
+    return humanAmount * priceUsd;
+  }
+
+  private parseAmount(value: string): bigint | null {
+    try {
+      return BigInt(value);
+    } catch {
+      return null;
+    }
+  }
+
+  private normalizeAddress(value?: string | null): string | null {
+    if (!value) return null;
+    return value.toLowerCase();
+  }
+
+  private toNumber(value?: string | number | null): number | null {
+    if (value == null) return null;
+    const num = typeof value === "number" ? value : Number(value);
+    return Number.isFinite(num) ? num : null;
   }
 
   private resolveChainId(chain: string): number {
