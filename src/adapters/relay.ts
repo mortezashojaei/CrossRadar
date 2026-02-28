@@ -20,6 +20,25 @@ type RelayCurrencyAmount = {
   amountUsdCurrent?: string | number | null;
 };
 
+type RelayRequestData = {
+  inTxs?: RelayTransaction[];
+  outTxs?: RelayTransaction[];
+  metadata?: {
+    currencyIn?: RelayCurrencyAmount;
+    currencyOut?: RelayCurrencyAmount;
+    route?: {
+      origin?: {
+        inputCurrency?: RelayCurrencyAmount;
+        outputCurrency?: RelayCurrencyAmount;
+      };
+      destination?: {
+        inputCurrency?: RelayCurrencyAmount;
+        outputCurrency?: RelayCurrencyAmount;
+      };
+    };
+  };
+};
+
 type RelayRequest = {
   id?: string;
   status?: string | null;
@@ -32,6 +51,7 @@ type RelayRequest = {
   currencyIn?: RelayCurrencyAmount;
   currencyOut?: RelayCurrencyAmount;
   refundCurrencyData?: RelayCurrencyAmount;
+  data?: RelayRequestData;
 };
 
 type RelayResponse = {
@@ -244,12 +264,12 @@ export class RelayAdapter implements Adapter {
         return created;
       }
     }
-    const inbound = this.getFirstTransactionDate(request.inTxs);
+    const inbound = this.getFirstTransactionDate(this.getInTransactions(request));
     return inbound;
   }
 
   private getCompletionDate(request: RelayRequest): Date | null {
-    const outbound = this.getFirstTransactionDate(request.outTxs);
+    const outbound = this.getFirstTransactionDate(this.getOutTransactions(request));
     if (outbound) {
       return outbound;
     }
@@ -302,10 +322,10 @@ export class RelayAdapter implements Adapter {
   private routeFromRequest(request: RelayRequest): RouteKey | null {
     const origin =
       this.normalizeChainId(request.originChainId) ??
-      this.getFirstChainId(request.inTxs);
+      this.getFirstChainId(this.getInTransactions(request));
     const destination =
       this.normalizeChainId(request.destinationChainId) ??
-      this.getFirstChainId(request.outTxs);
+      this.getFirstChainId(this.getOutTransactions(request));
     if (origin == null || destination == null) return null;
     return {
       protocol: this.protocol,
@@ -322,6 +342,14 @@ export class RelayAdapter implements Adapter {
     return value ?? null;
   }
 
+  private getInTransactions(request: RelayRequest): RelayTransaction[] {
+    return request.inTxs ?? request.data?.inTxs ?? [];
+  }
+
+  private getOutTransactions(request: RelayRequest): RelayTransaction[] {
+    return request.outTxs ?? request.data?.outTxs ?? [];
+  }
+
   private normalizeChainId(value?: number | string | null): number | null {
     if (value == null) return null;
     if (typeof value === "string") {
@@ -334,12 +362,25 @@ export class RelayAdapter implements Adapter {
   }
 
   private extractUsdAmount(request: RelayRequest): number | null {
+    const data = request.data ?? {};
+    const metadata = data.metadata ?? {};
+    const route = metadata.route ?? {};
     const candidates = [
       request.currencyIn?.amountUsdCurrent,
       request.currencyIn?.amountUsd,
       request.currencyOut?.amountUsdCurrent,
       request.currencyOut?.amountUsd,
       request.refundCurrencyData?.amountUsd,
+      metadata.currencyIn?.amountUsdCurrent,
+      metadata.currencyIn?.amountUsd,
+      metadata.currencyOut?.amountUsdCurrent,
+      metadata.currencyOut?.amountUsd,
+      route.origin?.inputCurrency?.amountUsdCurrent,
+      route.origin?.inputCurrency?.amountUsd,
+      route.destination?.inputCurrency?.amountUsdCurrent,
+      route.destination?.inputCurrency?.amountUsd,
+      route.destination?.outputCurrency?.amountUsdCurrent,
+      route.destination?.outputCurrency?.amountUsd,
     ];
     for (const value of candidates) {
       const num = this.toNumber(value);
