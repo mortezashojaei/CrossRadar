@@ -1,129 +1,340 @@
-# Quote-vs-Fill Opportunity Engine — Feasibility & Access Assessment
+# Quote-vs-Fill Opportunity Engine — Feasibility & Unblocking Research
 
 ## Executive Summary
-- **Partially feasible now** using current CrossRadar codebase as a starting point for *lane-level health telemetry* (recent Across deposits + Relay requests), but **not yet feasible for solver-grade EV decisions** because the PRD's blocking prerequisites are currently unmet.
-- The biggest technical gaps are exactly the PRD's own blockers: no persisted quote snapshots, no deterministic quote→fill join flow, incomplete all-in cost attribution, and no historical backtest corpus.
-- Environment-level outbound HTTPS restrictions (CONNECT 403 / ENETUNREACH) currently prevent live API verification from this runtime. This is a delivery blocker for any near-real-time production pipeline validation.
+- **CrossRadar can already produce lane-health telemetry** (volume, success rate, completion latency) from Across deposits and Relay requests.
+- **CrossRadar cannot yet produce solver-grade quote/skip decisions** because the core pre-reqs in the PRD are still missing in code and data model: quote snapshots, deterministic quote→fill linkage, full cost attribution, persistence/backtesting, and risk policy enforcement.
+- **Runtime network egress is blocked in this environment** (`CONNECT tunnel failed, response 403`; Node fetch failure), so live endpoint discovery and contract validation are currently blocked from this container.
+- The fastest way to unblock delivery is to execute a **data-foundation-first sequence**:
+  1) persistent raw event capture,
+  2) quote snapshot collector,
+  3) deterministic join keys + QA gates,
+  4) cost ledger,
+  5) backtest corpus and risk policy engine.
 
-## What Is Already Possible With Current Repo
+---
 
-### 1) Route-level ingestion for recent activity is already implemented
-- Across adapter reads recent `deposits` from the public indexer and captures origin/destination chain IDs, deposit/fill timestamps, status, and token amounts/prices when present.
-- Relay adapter reads `requests/v2` and captures status, created/updated timestamps, in/out tx traces, and selected USD amount fields.
+## 1) Current-State Evidence From Repository
 
-**Implication:** You can already produce a *health radar* signal per lane (traffic, success, latency), and this can seed lane selection for later EV work.
+### 1.1 What the adapters already capture
 
-### 2) Chain normalization foundation exists (but is not enough yet)
-- There is a chain alias resolution layer (`ETH`, `ARB`, etc.) and generated chain map for ID/name lookup.
+#### Relay adapter (`src/adapters/relay.ts`)
+- Pulls from `/requests/v2` with pagination + continuation token handling.
+- Captures request identifiers, status, chain IDs, created/updated timestamps, in/out tx arrays, and selected USD amount fields from multiple nested paths.
+- Produces route-level metrics (`txCount`, `usdVolume`, median completion, success rate).
 
-**Implication:** Good baseline for lane joins, but token normalization and protocol-specific canonical token mapping are still missing for quote-vs-fill accounting.
+**Implication:** Good foundation for intent/fill outcome tracking and lane-level health analytics, but no quote snapshot ingestion path exists.
 
-### 3) You have a Relay sample fixture with rich per-intent metadata
-- The fixture includes nested amounts, route details, in/out tx arrays, and fee metadata surfaces in some records.
+#### Across adapter (`src/adapters/across.ts`)
+- Pulls recent deposits from indexer endpoint and filters by window.
+- Captures origin/destination chain ids, status proxy (`filled`), timestamps, token + amount values, and estimates USD volume using input token price fields + optional price client lookup.
 
-**Implication:** You can design and test parsers for intent schema offline, even before live API reachability is restored.
+**Implication:** Useful for route health and observed fills; insufficient for quote-time edge estimation.
 
-## Requirement-by-Requirement Feasibility (PRD V1)
+### 1.2 What the domain model currently optimizes for
+- Existing scoring logic ranks by health characteristics (activity, completion speed, success rate), not EV edge.
+- Current tests validate formatting/scoring/stat behavior, not quote-vs-fill reconstruction.
 
-| PRD Requirement | Current Status | Feasible Now? | Key Gaps / Blockers |
-|---|---|---:|---|
-| Intent ingestion (chain pair, token in/out, amount in, quote snapshot, fill outcome, status, latency) | Partial | ⚠️ Partial | Fill/status/latency are available; **quote snapshot at intent time is not captured** anywhere in current pipeline. |
-| Cost model (gas, protocol/gateway fees, fail/retry, inventory/rebalance) | Minimal | ❌ No | Current code computes only rough USD volume; no per-intent gas/fee ledger and no inventory/rebalance model. |
-| Edge/EV engine | Not implemented | ❌ No | No gross edge / net EV / risk-adjusted edge computation exists yet. |
-| Opportunity ranking + thresholds | Not implemented | ❌ No | Health ranking exists, EV ranking does not. |
-| Decision output (`quote`, `quote_wide`, `skip`) | Not implemented | ❌ No | No bot-facing decision schema currently emitted. |
-| Backtest mode | Not implemented | ❌ No | No historical warehouse or deterministic replay path. |
-| <=60s freshness | Not implemented for intents | ⚠️ Conditional | Runtime loop exists, but with no robust event capture, persistence, or replay guarantees. |
-| 99% reliability and auditability | Not implemented | ❌ No | No persistent pipeline state, run tracking, or source lineage per recommendation. |
+**Implication:** The runtime is a strong observability monitor, not yet a solver decision engine.
 
-## Pre-Requirement Blockers (from PRD) vs. Current Reality
+---
 
-### 1) Reliable quote snapshot source
-**Status:** Blocked.
-- Current adapters read post-hoc request/deposit feeds; they do not capture the *best executable quote at intent timestamp*.
-- Without this, edge cannot be measured correctly (only rough realized outcomes can be observed).
+## 2) Blocker-by-Blocker Deep Dive (Root Cause → Unblock Plan)
 
-### 2) Deterministic fill outcome join key
-**Status:** Partially blocked.
-- Relay has request IDs and tx traces in fixtures, which is promising.
-- Across currently ingests deposits only; deterministic quote→intent→fill linkage is not implemented in schema/pipeline.
+## Blocker A — Reliable Quote Snapshot Source
 
-### 3) Unified chain/token normalization
-**Status:** Partial.
-- Chain normalization exists.
-- Token normalization is not unified across protocols (symbol/address/decimals canonicalization and wrapped/native equivalence are missing).
+### Why blocked
+- No collector currently records the best executable quote at intent timestamp.
+- Current pipeline is mostly post-hoc (requests/deposits), so gross edge cannot be measured deterministically.
 
-### 4) Cost attribution
-**Status:** Blocked.
-- No all-in cost table in current model.
-- Need per-intent gas accounting, fee extraction normalization, fail/retry expected loss, and inventory/rebalance overhead modeling.
+### Unblock plan
+1. Add `quote_snapshots` ingestion job with strict polling cadence per target lane/size bucket.
+2. Persist both normalized fields and raw payload (`jsonb`) for future parser evolution.
+3. Add freshness + completeness SLAs:
+   - quote timestamp skew <= 2s vs collector clock,
+   - >=95% snapshot coverage for target intents.
 
-### 5) Historical backtest dataset (2–4 weeks)
-**Status:** Blocked.
-- Current service is stateless and does not persist raw intents.
+### Proposed schema (MVP)
+```sql
+create table quote_snapshots (
+  quote_id text primary key,
+  protocol text not null,
+  src_chain_id int not null,
+  dst_chain_id int not null,
+  token_in text not null,
+  token_out text not null,
+  amount_in numeric(78,0) not null,
+  quoted_amount_out numeric(78,0) not null,
+  quote_timestamp timestamptz not null,
+  expires_at timestamptz null,
+  route_hash text null,
+  raw_payload jsonb not null,
+  created_at timestamptz not null default now()
+);
+create index on quote_snapshots (protocol, src_chain_id, dst_chain_id, quote_timestamp desc);
+```
 
-### 6) Risk limits config
-**Status:** Blocked.
-- No risk controls (lane notional caps, open inventory caps, daily loss caps) in current runtime.
+### QA gates
+- `quote_snapshot_coverage_pct` (joined intents with usable quote / all candidate intents).
+- `quote_payload_parse_success_pct`.
 
-## Access & API Reachability Findings in This Environment
+---
 
-### What was attempted
-- Direct HTTPS calls to public Relay and Across endpoints.
-- Node `fetch` and `curl` attempts from the container.
+## Blocker B — Deterministic Quote→Intent→Fill Join Key
 
-### Result
-- Outbound connectivity is currently constrained from this runtime:
-  - `curl` returns `CONNECT tunnel failed, response 403` for both Relay and Across public endpoints.
-  - Node fetch fails with `ENETUNREACH`.
+### Why blocked
+- Relay and Across expose different identifiers and life-cycle fields.
+- Current code does route-level grouping; it does not persist a canonical intent identity graph.
 
-### Impact
-- Live endpoint schema validation, quote endpoint exploration, and coverage measurement cannot be completed from this environment right now.
-- Offline analysis can continue using repository fixtures and code, but production confidence remains blocked until network egress is fixed or an internal proxy allowlist is provided.
+### Unblock plan
+1. Introduce canonical identity model:
+   - `canonical_intent_id` (internal UUID).
+   - `source_protocol`, `source_request_id`, `source_deposit_id` (nullable depending on protocol).
+   - tx-hash level linkage table for fallback joins.
+2. Join priority order:
+   - **P0 deterministic IDs** (explicit protocol IDs).
+   - **P1 tx-hash linkage** (`inTx`/`outTx` pairs).
+   - **P2 fuzzy temporal+amount fallback** (for diagnostics only, never for production EV).
+3. Store join provenance and confidence.
 
-## What You Can Build Immediately (Even Before Full API Access)
+### Proposed schema (MVP)
+```sql
+create table intent_events (
+  canonical_intent_id uuid primary key,
+  protocol text not null,
+  source_request_id text null,
+  source_deposit_id text null,
+  src_chain_id int not null,
+  dst_chain_id int not null,
+  token_in text not null,
+  token_out text not null,
+  amount_in numeric(78,0) not null,
+  intent_timestamp timestamptz not null,
+  status text not null,
+  fill_timestamp timestamptz null,
+  fill_amount_out numeric(78,0) null,
+  raw_payload jsonb not null,
+  created_at timestamptz not null default now()
+);
 
-1. **Data contracts + warehouse schema now**
-   - Create `intent_events`, `quote_snapshots`, `fill_outcomes`, `cost_events`, and `lane_metrics_5m` tables.
-   - Add protocol-specific raw payload columns (`jsonb`) for auditability.
+create table intent_join_links (
+  canonical_intent_id uuid not null,
+  link_type text not null, -- request_id | deposit_id | tx_hash | fuzzy
+  link_value text not null,
+  confidence numeric(5,4) not null,
+  primary key (canonical_intent_id, link_type, link_value)
+);
+```
 
-2. **Parser hardening against known Relay payload variability**
-   - Implement extraction from both top-level and nested paths.
-   - Track per-field completeness metrics (coverage dashboard).
+### QA gates
+- `deterministic_join_pct >= 95%` on target lanes before enabling solver outputs.
+- `fuzzy_join_pct` must trend toward zero for production decisions.
 
-3. **Join-quality QA framework**
-   - Build deterministic key strategy and emit `% join coverage` as a hard gate.
+---
 
-4. **Backtest harness scaffolding**
-   - Deterministic replay against frozen fixtures/exports.
+## Blocker C — Unified Chain/Token Normalization
 
-## Concrete External Blockers to Resolve First
+### Why blocked
+- Chain alias support exists, but token identity remains protocol-specific.
+- Edge calculations fail if wrapped/native aliases and decimal mismatches are unresolved.
 
-1. **Network/API egress from runtime**
-   - Must allow HTTPS access to at least Across indexer + Relay API (and any quote endpoints you pick).
+### Unblock plan
+1. Add canonical token dimension keyed by `(chain_id, address_normalized)` + symbol metadata.
+2. Add equivalence mapping for wrapped/native representations where required by strategy.
+3. Enforce decimal normalization at ingest boundary; reject/flag inconsistent payloads.
 
-2. **Quote snapshot ingestion path**
-   - Add active quote polling/snapshot capture at intent time (or consume a quote stream if available).
+### Proposed schema (MVP)
+```sql
+create table dim_tokens (
+  chain_id int not null,
+  token_address text not null,
+  symbol text null,
+  decimals int not null,
+  canonical_token_id text not null,
+  is_native bool not null default false,
+  primary key (chain_id, token_address)
+);
 
-3. **Persistent storage**
-   - Postgres for MVP; ClickHouse if volume/latency pressure appears.
+create table token_equivalences (
+  canonical_token_id text not null,
+  equivalent_token_id text not null,
+  reason text not null,
+  primary key (canonical_token_id, equivalent_token_id)
+);
+```
 
-4. **Cost attribution sources**
-   - Gas (on-chain receipts + price normalization), protocol fees, app fees, retry/fail penalties, inventory/rebalance cost source.
+### QA gates
+- `token_resolution_success_pct >= 99%` for active lanes.
+- hard fail on unknown decimals for any record entering EV engine.
 
-5. **Risk config and policy engine**
-   - Lane caps, global inventory caps, stop-loss policy, and confidence threshold gating before bot integration.
+---
 
-## Suggested Go / No-Go Criteria for Starting Solver Bot Logic
+## Blocker D — Cost Attribution (All-in)
 
-Proceed to bot logic only when all are true:
-- Quote snapshot capture coverage on target lanes >= 95%.
-- Quote→fill deterministic join coverage >= 95%.
-- Gas+fee completeness >= 98%.
-- At least 2–4 weeks of immutable historical intent data available.
-- Risk limits config enforced and tested in simulation.
+### Why blocked
+- Current implementation focuses on rough USD totals and completion metrics.
+- No per-intent cost ledger (gas, protocol fee, retry/failure cost, inventory/rebalance cost).
+
+### Unblock plan
+1. Build `cost_events` table keyed by `canonical_intent_id`.
+2. Store each cost component as separate rows for transparent attribution.
+3. Introduce inventory/rebalance model as configurable policy function.
+
+### Proposed schema (MVP)
+```sql
+create table cost_events (
+  canonical_intent_id uuid not null,
+  cost_type text not null, -- gas | protocol_fee | app_fee | retry_penalty | inventory_carry | rebalance
+  amount_usd numeric(38,10) not null,
+  amount_native numeric(78,0) null,
+  native_token text null,
+  source text not null,
+  observed_at timestamptz not null,
+  raw_payload jsonb null,
+  primary key (canonical_intent_id, cost_type, source, observed_at)
+);
+```
+
+### QA gates
+- `gas_fee_completeness_pct >= 98%`.
+- Reconciled net PnL checks on sample windows.
+
+---
+
+## Blocker E — Historical Dataset for Backtesting
+
+### Why blocked
+- Service is stateless at runtime; no immutable historical warehouse exists.
+- Existing fixtures are useful for parser tests but insufficient for statistical confidence.
+
+### Unblock plan
+1. Persist raw + normalized events for 2–4 weeks minimum.
+2. Add immutable snapshot partitions (`event_date`) for deterministic replay.
+3. Build replay runner that recomputes EV signals from frozen data only.
+
+### QA gates
+- replay determinism checks (same input snapshot => byte-identical output JSON).
+- minimum sample thresholds per lane/size bucket.
+
+---
+
+## Blocker F — Risk Limits Config + Policy Engine
+
+### Why blocked
+- No risk policy object currently gates output actions.
+
+### Unblock plan
+1. Add declarative risk config:
+   - per-lane notional caps,
+   - global inventory cap,
+   - daily max loss,
+   - min confidence thresholds.
+2. Execute policy evaluation post-EV calculation and pre-decision emission.
+3. Record policy explanations for auditability.
+
+### Proposed config fragment
+```yaml
+risk:
+  lane_caps_usd:
+    "relay:1->10": 50000
+  global_inventory_cap_usd: 250000
+  daily_loss_cap_usd: 10000
+  min_confidence: 0.70
+  max_fail_risk: 0.08
+```
+
+---
+
+## 3) End-to-End Architecture to Unblock in Phases
+
+## Phase 0 (1–2 days): Contract-first scaffolding
+- Define TypeScript interfaces and SQL migrations for `intent_events`, `quote_snapshots`, `fill_outcomes` (or intent status columns), `cost_events`, and `lane_metrics_5m`.
+- Add `raw_payload` + source timestamps everywhere.
+
+## Phase 1 (3–5 days): Collectors + persistence
+- Implement durable ingestion workers:
+  - Relay requests collector,
+  - Across deposits/fills collector,
+  - Quote snapshot collector.
+- Add idempotent upserts and dedupe keys.
+
+## Phase 2 (2–4 days): Join engine + data quality gates
+- Build deterministic join graph.
+- Emit quality KPIs every run:
+  - quote coverage,
+  - deterministic join coverage,
+  - token resolution coverage,
+  - gas/fee completeness.
+
+## Phase 3 (3–5 days): EV engine + policy gating
+- Compute per-intent:
+  - gross edge,
+  - total costs,
+  - net EV,
+  - risk-adjusted EV.
+- Aggregate to lane/size/time buckets and emit decision feed.
+
+## Phase 4 (3–5 days): Backtest + calibration
+- Replay 2–4 weeks frozen data.
+- Tune thresholds for precision/recall vs conservative baseline.
+
+---
+
+## 4) Recommended Data Contracts (Unambiguous Definitions)
+
+- `grossEdgeUsd = fair_quote_out_usd - actual_fill_out_usd`
+- `netEdgeUsd = grossEdgeUsd - (gas + protocol_fee + app_fee + retry_penalty + inventory_carry + rebalance)`
+- `expectedValueUsd = p_success * netEdgeUsd - (1 - p_success) * failure_loss_usd`
+- `riskAdjustedEdge = expectedValueUsd * confidence_score * stability_multiplier`
+
+**Decision mapping (example):**
+- `quote` if `riskAdjustedEdge >= quote_threshold`
+- `quote_wide` if `0 < riskAdjustedEdge < quote_threshold`
+- `skip` otherwise
+
+---
+
+## 5) Research Findings on Environment Access (Current Runtime)
+
+### Commands executed
+- `curl -I https://api.relay.link/requests/v2`
+- `curl -I https://across.to`
+- `node -e "fetch('https://api.relay.link/requests/v2?limit=1')..."`
+
+### Observed behavior
+- `curl`: `CONNECT tunnel failed, response 403`
+- Node fetch: request failure (no successful status returned)
+
+### Practical effect
+- Live contract verification cannot be completed from this environment.
+- Continue implementation against strict contracts + fixtures now; perform endpoint validation once egress allowlist/proxy is provided.
+
+---
+
+## 6) Immediate Repo Tasks to Unblock Delivery (Priority Order)
+
+1. **Introduce persistence layer + migrations** for all core entities.
+2. **Add quote snapshot collector interface** (protocol-agnostic) and start storing raw quotes.
+3. **Create deterministic join module** with provenance + confidence.
+4. **Implement token normalization tables and resolvers**.
+5. **Implement cost ledger extractors** and fallback estimation policy.
+6. **Add QA report job** that fails CI/runtime when coverage thresholds drop below guardrails.
+7. **Only then** implement bot-facing `quote | quote_wide | skip` feed.
+
+---
+
+## 7) Go/No-Go Criteria for Starting Solver Bot Logic
+
+Proceed only when all are true on target lanes:
+- Quote snapshot coverage >= 95%.
+- Deterministic quote→fill join coverage >= 95%.
+- Gas + fee completeness >= 98%.
+- Token normalization success >= 99%.
+- Minimum 2–4 weeks immutable intent history.
+- Risk policy gates enforced and validated in replay.
+
+---
 
 ## Bottom Line
-- **Today:** You can extend CrossRadar into a robust *data foundation* project quickly.
-- **Not today:** You cannot responsibly run a quote/skip solver strategy from current data surfaces alone.
-- **Highest priority:** Restore live API reachability and implement quote snapshot + cost attribution capture; those two unlock almost everything else in the PRD.
+- **Feasible now:** Build the full data foundation, quality gates, and replay framework on top of current CrossRadar adapters.
+- **Not feasible yet:** Production solver decisions without quote snapshots, deterministic joins, and complete cost attribution.
+- **Highest leverage next step:** Implement persistence + quote snapshot capture first; these remove the largest blockers and unlock EV engine development.
