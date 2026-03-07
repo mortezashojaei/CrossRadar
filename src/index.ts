@@ -1,8 +1,8 @@
 import { config, getFallbackRoutes } from "./config";
 import { logger } from "./logger";
 import { computeWindowRange } from "./core/window";
-import { scoreMetrics } from "./core/scoring";
-import { formatReport, DecoratedMetrics } from "./reporting/format";
+import { scoreOpportunity, OpportunitySignal } from "./core/opportunity";
+import { formatReport } from "./reporting/format";
 import { postToTelegram } from "./reporting/telegram";
 import { AcrossAdapter } from "./adapters/across";
 import { RelayAdapter } from "./adapters/relay";
@@ -121,9 +121,9 @@ async function planRoutes(
 
 async function runOnce(): Promise<void> {
   const { start, end } = computeWindowRange(config.WINDOW_MINUTES);
-  logger.info({ start, end }, "running bridge health cycle");
+  logger.info({ start, end }, "running bridge opportunity cycle");
 
-  const decorated: DecoratedMetrics[] = [];
+  const opportunities: OpportunitySignal[] = [];
   const routePlans = await planRoutes(start, end);
 
   for (const plan of routePlans) {
@@ -132,7 +132,7 @@ async function runOnce(): Promise<void> {
     if (!adapter) {
       logger.warn({ route }, "no adapter for protocol");
       const metrics = adapterErrorMetrics(route, start, end, "adapter missing");
-      decorated.push({ metrics, status: scoreMetrics(metrics) });
+      opportunities.push(scoreOpportunity(metrics));
       continue;
     }
 
@@ -151,7 +151,7 @@ async function runOnce(): Promise<void> {
       const metrics = events
         ? await adapter.computeMetrics(events, route, start, end)
         : await adapter.getMetricsForWindow(route, start, end);
-      decorated.push({ metrics, status: scoreMetrics(metrics) });
+      opportunities.push(scoreOpportunity(metrics));
     } catch (error) {
       logger.error({ route, err: error }, "adapter error");
       const metrics = adapterErrorMetrics(
@@ -160,15 +160,11 @@ async function runOnce(): Promise<void> {
         end,
         `adapter error: ${(error as Error).message}`
       );
-      decorated.push({ metrics, status: scoreMetrics(metrics) });
+      opportunities.push(scoreOpportunity(metrics));
     }
   }
 
-  const message = formatReport(
-    decorated,
-    start,
-    end
-  );
+  const message = formatReport(opportunities, start, end);
 
   console.log("\n" + message + "\n");
   await postToTelegram(message, config, logger);

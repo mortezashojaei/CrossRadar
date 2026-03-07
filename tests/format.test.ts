@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { formatReport } from "../src/reporting/format";
 import { RouteMetrics } from "../src/adapters/types";
-import { scoreMetrics } from "../src/core/scoring";
+import { scoreOpportunity } from "../src/core/opportunity";
 
 const metrics: RouteMetrics = {
   key: { protocol: "Across", srcChain: "ETH", dstChain: "ARB" },
@@ -18,10 +18,7 @@ describe("formatReport", () => {
   it("escapes markdown", () => {
     const text = formatReport(
       [
-        {
-          metrics,
-          status: scoreMetrics(metrics),
-        },
+        scoreOpportunity(metrics),
       ],
       new Date(metrics.windowStart),
       new Date(metrics.windowEnd)
