@@ -9,6 +9,17 @@ import {
 
 const COST_FLOOR = 0;
 
+export type RankingThresholds = {
+  minSampleCount: number;
+  minEvUsd: number;
+  maxFailRisk: number;
+};
+
+export type RankedOpportunity = {
+  metric: LaneMetrics;
+  failRisk: number;
+};
+
 export function computeEdgeMetrics(input: EdgeComputationInput): EdgeMetrics {
   const grossEdgeUsd = input.quoteAmountOutUsd - input.fillAmountOutUsd;
   const totalCostsUsd = input.costs.reduce(
@@ -64,6 +75,27 @@ export function aggregateLaneMetrics(metrics: LaneMetrics[]): LaneMetrics[] {
       confidence: weighted((m) => m.confidence),
     };
   });
+}
+
+export function rankOpportunities(
+  metrics: LaneMetrics[],
+  failRiskByLane: Record<string, number>,
+  thresholds: RankingThresholds
+): RankedOpportunity[] {
+  return metrics
+    .map((metric) => ({ metric, failRisk: failRiskByLane[laneId(metric)] ?? 1 }))
+    .filter(
+      ({ metric, failRisk }) =>
+        metric.sampleCount >= thresholds.minSampleCount &&
+        metric.expectedValueUsd >= thresholds.minEvUsd &&
+        failRisk <= thresholds.maxFailRisk
+    )
+    .sort((a, b) => {
+      if (b.metric.expectedValueUsd !== a.metric.expectedValueUsd) {
+        return b.metric.expectedValueUsd - a.metric.expectedValueUsd;
+      }
+      return b.metric.confidence - a.metric.confidence;
+    });
 }
 
 function laneId(metric: Pick<LaneMetrics, "protocol" | "srcChainId" | "dstChainId">): string {
