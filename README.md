@@ -1,115 +1,49 @@
-# CrossRadar — Bridge Health Radar
+# CrossRadar
 
-Autonomous stateless service that samples recent activity from Across (via the public indexer API) and Relay (via the public requests API), scores the last N minutes of health, and posts a formatted summary to Telegram.
+CrossRadar scans **Across + Relay** activity and surfaces the **best bridge opportunity signals** in a rolling window.
 
-## Features
-- Fetches per-route metrics (tx count, median completion, success rate) for Across and Relay routes using public endpoints.
-- Automatically highlights up to the top 5 most-active routes each run (dynamic selection can be disabled via env). Each protocol (Across + Relay) keeps at least one fallback route even when live data is sparse, so both surfaces stay represented.
-- Classifies health with 🟢 / 🟡 / 🔴 (and ⚪ when insufficient data) plus optional insights.
-- Stateless: every run queries "recent" data and filters in-memory.
-- Outputs Markdown-formatted Telegram message (also printed to stdout).
-- Dry-run automatically if Telegram env vars are missing.
-- Tests (Vitest) for stats, scoring, and Markdown escaping.
-- Optional GitHub Actions workflow + `pnpm dev` loop for cron-style deployments.
+It runs stateless, ranks routes by a simple opportunity score, prints a report, and can post the same report to Telegram.
 
-## Requirements
-- Node.js 22+
-- pnpm 9+ (managed via `corepack enable`)
+## What it does
+- Pulls recent route activity from Across and Relay public APIs.
+- Computes per-route metrics (flow, success, completion speed, USD volume when available).
+- Converts metrics into ranked opportunity signals (`opportunity_score`, `est_edge_bps`, confidence, risk).
+- Auto-selects busiest routes (`DYNAMIC_ROUTES=true`) with protocol fallbacks.
 
-## Environment Variables
-| Variable | Description |
-| --- | --- |
-| `TELEGRAM_BOT_TOKEN` | Bot token from @BotFather |
-| `TELEGRAM_CHAT_ID` | Target chat/channel ID (use negative ID for channels) |
-| `ACROSS_BASE_URL` | Defaults to `https://indexer.api.across.to` |
-| `RELAY_BASE_URL` | Defaults to `https://api.relay.link` |
-| `COINGECKO_API_KEY` | Optional; enables live USD pricing for per-route volume |
-| `WINDOW_MINUTES` | Lookback window (default 15) |
-| `RUN_EVERY_MINUTES` | Loop cadence for `pnpm dev` (default 5) |
-| `MAX_ROUTES` | Maximum number of routes to report when dynamic selection is enabled (default 5) |
-| `DYNAMIC_ROUTES` | When `true` (default), CrossRadar inspects recent Across **and Relay** activity and reports up to `MAX_ROUTES` busiest routes; set to `false` to use the static `ROUTES` list. |
-| `ROUTES` | JSON array of `{ protocol, srcChain, dstChain }` entries. `srcChain`/`dstChain` can be common names (ETH, ARB, OPT, BASE, etc.) or numeric chain IDs. Only used when `DYNAMIC_ROUTES=false` or no dynamic data is available. Set `protocol` to `Across` or `Relay` to pick the adapter. |
-
-### Sample `.env`
-(Default dynamic behaviour requires only Telegram + optional timing vars. The snippet below shows how to pin a single static route.)
-```bash
-TELEGRAM_BOT_TOKEN=123:abc
-TELEGRAM_CHAT_ID=-987654321
-WINDOW_MINUTES=15
-RUN_EVERY_MINUTES=5
-DYNAMIC_ROUTES=false
-ROUTES='[
-  {"protocol":"Across","srcChain":"ETH","dstChain":"ARB"}
-]'
+## Flow (visual)
+```mermaid
+flowchart LR
+    A[Across API] --> D[CrossRadar Engine]
+    B[Relay API] --> D
+    C[Config + Route Planner] --> D
+    D --> E[Opportunity Scoring]
+    E --> F[Markdown Report]
+    F --> G[Stdout]
+    F --> H[Telegram]
 ```
 
-Need Relay metrics too? Add another entry with `"protocol":"Relay"` and the origin/destination chain IDs/names you care about:
-```bash
-ROUTES='[
-  {"protocol":"Across","srcChain":"ETH","dstChain":"ARB"},
-  {"protocol":"Relay","srcChain":"8453","dstChain":"7777777"}
-]'
-```
-
-## Telegram Setup
-1. Talk to [@BotFather](https://t.me/BotFather) → `/newbot` → copy the HTTP API token.
-2. Add the bot to your channel/group and promote it if posting to a channel.
-3. Get `chat_id`:
-   - For groups: send a message, then call `https://api.telegram.org/bot<token>/getUpdates` and inspect `chat.id`.
-   - For channels: use [`@RawDataBot`](https://t.me/RawDataBot) or the same getUpdates flow (channel IDs are negative).
-4. Export `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` before running.
-
-## Development
-Install deps:
+## Quick start
 ```bash
 pnpm install
-```
-
-### One-off run (prints + posts)
-```bash
 pnpm start
 ```
 
-### Loop every RUN_EVERY_MINUTES (defaults to 5)
+### Required env for Telegram posting
 ```bash
-pnpm dev
+TELEGRAM_BOT_TOKEN=...
+TELEGRAM_CHAT_ID=...
 ```
 
-### Tests
+If Telegram env vars are missing, CrossRadar runs in dry mode (prints only).
+
+## Useful commands
 ```bash
-pnpm test
+pnpm start      # single run
+pnpm dev        # loop mode (--loop)
+pnpm test       # test suite
 ```
 
-## Example Output
-```
-Bridge Health — Last 15 Minutes (UTC)
-2026-02-26T23:10:00.000Z
+## Current project stage
+CrossRadar is currently strongest as a **live opportunity radar**.
 
-🟢 Across ETH→ARB
-• tx_count: 18
-• usd_volume: N/A
-• median_minutes: 3.2
-• success_rate: 100.0%
-
-🟡 Across ETH→OPT
-• tx_count: 3
-• usd_volume: N/A
-• median_minutes: 6.5
-• success_rate: 90.0%
-• notes: latency creeping
-```
-
-## Deployment
-### GitHub Actions (scheduled every 5 minutes)
-Update repository secrets for `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, and any API overrides. Workflow file: `.github/workflows/bridge-health.yml`.
-
-### Cron / systemd
-Run `pnpm start` every 5 minutes (or use `pnpm dev` in a long-running process manager such as PM2 or systemd). Example cron:
-```
-*/5 * * * * cd /opt/crossradar && pnpm start >> /var/log/crossradar.log 2>&1
-```
-
-## Notes & TODOs
-- The Across adapter relies on the public indexer (`https://indexer.api.across.to`). If schemas change, update `src/adapters/across.ts`.
-- Dynamic route selection pulls the most recent 500 deposits and sorts by activity; increase `MAX_ROUTES` (<=20) if you need more coverage.
-- Success-rate and completion metrics gracefully degrade to `null` when unavailable; status falls back to ⚪ with notes.
+The repo also includes **quote-vs-fill opportunity engine building blocks** (join logic, EV/risk formulas, quality gates, backtest primitives) for the next stage toward solver-grade quote/skip decisions.
